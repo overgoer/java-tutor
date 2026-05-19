@@ -2,41 +2,49 @@
 
 Персональный AI-тьютор по Java (AQA Interview Survival, 18 недель).
 
-Telegram-бот, который ведёт по программе, напоминает, мотивирует, проверяет код.
+Telegram-бот: **@razesdazbot**
+
+## Возможности
+
+- **Чат по Java** — любые вопросы, объяснения с кодом
+- **Программа 18 недель** — ведёт от синтаксиса до mock-собесов
+- **Threading** — `вв <вопрос>` для нового треда, иначе продолжение
+- **Stuck points** — вопросы сохраняются, `опрос` тестирует по ним
+- **Ночной дайджест** — в 3:00 подбирает статьи + выдержки из Хорстманна
+- **Утреннее напоминание** — в 9:02 мотивация
 
 ## Быстрый старт
 
 ```bash
 cp .env.example .env
-# вставить DEEPSEEK_API_KEY
+# вставить DEEPSEEK_API_KEY и TG_BOT_TOKEN
 
-python3 coach.py --chat              # интерактивный режим
+python3 coach.py --chat              # интерактивно
 python3 coach.py "что такое final?"  # разовый вопрос
-python3 coach.py --status            # текущий прогресс
 python3 coach.py --daily             # утренняя мотивация
 ```
 
-## Установка на сервер
+## Архитектура
 
-```bash
-git clone https://github.com/overgoer/java-tutor.git /root/java-tutor
-cd /root/java-tutor
-cp .env.example .env
-# вставить ключи
-
-# cron: ежедневное напоминание в 9 утра
-echo "0 9 * * * cd /root/java-tutor && python3 coach.py --daily | python3 -c 'import sys; sys.path.insert(0,\"/root/blog-analysis/agents/bsa\"); from telegram_bot import push_message; push_message(sys.stdin.read())'" | crontab -
+```
+bot.py  ←→  coach.py  ←→  memory.json
+                ↑
+          researcher.py  ←→  extractor.py  ←→  books/*.txt
 ```
 
-## Программа
+## Команды
 
-18 недель, 6 фаз:
+| Команда | Действие |
+|---------|----------|
+| любой вопрос по Java | объяснение с кодом |
+| `поехали` | начать программу |
+| `дальше` | следующая неделя |
+| `статус` | прогресс |
+| `дай задачу` | практика |
+| `опрос / зачёт / собес` | мини-интервью |
+| `/new` / `вв <вопрос>` | новый тред |
+| `проверь код` | ревью Java-кода |
 
-| Фаза | Недели | Тема |
-|------|--------|------|
-| 0 Фундамент | 1-4 | Синтаксис, String, ООП, наследование |
-| 1 Core для собеса | 5-8 | Collections, многопоточность, Streams |
-| 2 Инструменты | 9-11 | Awaitility, RestAssured, JUnit/Mockito |
-| 3 Алгоритмы лайт | 12-13 | Two Sum, стек/очередь, Big O |
-| 4 System Design | 14-15 | Нагрузка, CI-стратегия |
-| 5 Mock-сессии | 16-18 | Полные собесы |
+## Документация для AI
+
+См. `AI_CONTEXT.md` — полная спецификация для будущих агентов.
