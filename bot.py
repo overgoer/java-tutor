@@ -22,6 +22,7 @@ from urllib.error import URLError
 BASE = Path(__file__).resolve().parent
 COACH = BASE / "coach.py"
 ENV_FILE = BASE / ".env"
+CHATS_FILE = BASE / "known_chats.json"
 POLL_INTERVAL = 10
 
 
@@ -37,6 +38,22 @@ def load_token():
             return line.split("=", 1)[1].strip()
     return None
 
+
+def register_chat(chat_id):
+    """Save chat_id so researcher can send messages."""
+    chats = load_chats()
+    chat_id_str = str(chat_id)
+    if chat_id_str not in chats:
+        chats.append(chat_id_str)
+    CHATS_FILE.write_text(json.dumps(chats, indent=2))
+
+def load_chats():
+    if CHATS_FILE.exists():
+        try:
+            return json.loads(CHATS_FILE.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+    return []
 
 def tg_api(method, data=None):
     """Call Telegram Bot API."""
@@ -118,6 +135,9 @@ def handle_message(msg):
     """Process a single message."""
     cid = msg["chat_id"]
     text = msg["text"]
+
+    # Register any chat that sends us a message
+    register_chat(cid)
 
     if text == "/start":
         send_message(cid,
