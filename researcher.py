@@ -25,6 +25,14 @@ BASE = Path(__file__).resolve().parent
 COACH_DIR = BASE
 MEMORY_FILE = COACH_DIR / "memory.json"
 
+# Try importing extractor (optional)
+try:
+    sys.path.insert(0, str(BASE))
+    from extractor import extract as extract_book
+    HAS_EXTRACTOR = True
+except Exception:
+    HAS_EXTRACTOR = False
+
 
 # ── Curriculum (same as in coach.py) ───────────────────────────────
 
@@ -180,8 +188,47 @@ def research_articles(week_num, topic, phase_name):
     if result.startswith("ERROR"):
         return result
 
-    # Split into practical vs theory sections by parsing
     return result
+
+
+def adapt_book_excerpt(week_num, topic, phase_name):
+    """Extract chapter from book and adapt for learning (not simplify!)."""
+    if not HAS_EXTRACTOR:
+        return None
+
+    raw = extract_book(week_num, topic)
+    if not raw:
+        return None
+
+    system = (
+        "Ты — Java Coach. У тебя есть сырой текст из учебника Хорстманна "
+        "(Core Java, том 1). Твоя задача — превратить его в учебный материал "
+        "для QA-инженера, который готовится к собесу.\n\n"
+        "ПРАВИЛА:\n"
+        "- НЕ упрощать. Не делать 'конфетку'. Сохранить глубину.\n"
+        "- Структурировать: суть → код → что важно на собесе → где копать.\n"
+        "- Код — обязательно с примерами. Без кода — не считается.\n"
+        "- Если встречается сложная тема — не обходи её, а покажи как "
+        "разбираться, на что смотреть в документации.\n"
+        "- Цель: научить Эдди читать и объяснять код, а не зазубривать.\n"
+        "- Русский язык. Термины — английские.\n"
+        "- Максимум 1500 символов. Жмись.\n\n"
+        "Формат:\n"
+        "📖 *Источник: Хорстманн, [глава]*\n"
+        "Суть: <1-2 предложения>\n\n"
+        "```java\n<ключевой пример кода>\n```\n\n"
+        "На собесе: <что спросят, как отвечать>\n"
+        "Покопайся: <куда смотреть в docs.oracle.com, на что обратить внимание>"
+    )
+
+    user = (
+        f"Тема: {topic}\n"
+        f"Неделя {week_num} · {phase_name}\n\n"
+        f"Вот сырой текст из книги. Сделай из него учебный материал:\n\n{raw['text'][:2000]}"
+    )
+
+    result = call_deepseek(system, user, temp=0.5, max_tokens=1500)
+    return result if not result.startswith("ERROR") else None
 
 
 # ── Build Message ───────────────────────────────────────────────────
@@ -206,6 +253,14 @@ def build_research_message(week_num, topic, phase_name):
     lines.append(f"📖 *Неделя {week_num}: {topic}*")
     lines.append(f"📁 {phase_name}\n")
 
+    # 1. Book excerpt (адаптация из Хорстманна)
+    excerpt = adapt_book_excerpt(week_num, topic, phase_name)
+    if excerpt:
+        lines.append(excerpt)
+        lines.append("")
+
+    # 2. Web articles
+    lines.append("🌐 *Статьи по теме*")
     articles = research_articles(week_num, topic, phase_name)
 
     if articles.startswith("ERROR"):
