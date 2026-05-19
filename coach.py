@@ -119,7 +119,8 @@ def load_memory():
         "sessions": 0,
         "streak": 0,
         "completed_weeks": [],
-        "mistakes": [],
+        "conversation": [],
+        "stuck_points": [],
         "strong_topics": [],
         "notes": [],
     }
@@ -223,10 +224,29 @@ def build_system_prompt(memory):
     lines.append("- Вопрос по Java → объясни с примерами кода")
     lines.append("- 'дай задачу' → задача на текущую тему")
     lines.append("- 'проверь код' → проанализируй, найди ошибки")
-    lines.append("- 'зачёт', 'собес' → проведи мини-собес")
+    lines.append("- 'зачёт', 'собес', 'опрос' → проведи мини-собес (по слабым местам если есть)")
     lines.append("- 'давай дальше' → отметь неделю, переходи к следующей")
+    lines.append("- '/new' или 'вв' → начать новый тред (сбросить историю)")
     lines.append("- 'статус' → покажи прогресс")
     lines.append("")
+
+    # Conversation history
+    conv = memory.get("conversation", [])
+    if conv:
+        lines.append("## История разговора (последние вопросы)")
+        for turn in conv[-5:]:
+            marker = " ⚠️" if turn.get("stuck") else ""
+            lines.append(f"- {turn['user'][:80]}{marker}")
+        lines.append("")
+
+    # Stuck points
+    stuck = memory.get("stuck_points", [])
+    if stuck:
+        lines.append("## Что вызывало вопросы (проверять на зачётах)")
+        for s in stuck[-5:]:
+            lines.append(f"- {s}")
+        lines.append("")
+
     lines.append("## Формат ответа")
     lines.append("Коротко и по делу. Закончи вопросом или действием.")
     return "\n".join(lines)
@@ -256,6 +276,8 @@ def cmd_status(memory):
     lines.append(f"🔥 Streak: {streak} дней · Сессий: {sessions}")
     if completed:
         lines.append(f"✅ Пройдено недель: {len(completed)}")
+    if memory.get("stuck_points"):
+        lines.append(f"📝 Нужно закрепить: {len(memory['stuck_points'])} тем")
     if memory.get("mistakes"):
         lines.append(f"📝 Слабых мест: {len(memory['mistakes'])}")
     return "\n".join(lines)
@@ -334,21 +356,72 @@ def cmd_daily(memory):
     )
 
 
+def cmd_quiz(memory):
+    """Quiz from stuck points. If none, quiz on current week topic."""
+    stuck = memory.get("stuck_points", [])
+    if stuck:
+        topics = "\n".join(f"- {s}" for s in stuck[-5:])
+        system = build_system_prompt(memory)
+        user = (
+            f"Проведи мини-собес (опрос) по этим темам, которые вызывали вопросы:\n"
+            f"{topics}\n\n"
+            "Задай 2-3 вопроса. Если ответ неверный — объясни и запиши как слабое место. "
+            "Если всё верно — похвали. В конце скажи оценку."
+        )
+        return call_deepseek(system, user)
+    else:
+        # Fallback: quiz on current week
+        week = memory.get("current_week", 0)
+        if week == 0:
+            return "Нет тем для опроса. Начни программу — 'поехали'."
+        _, week_info = find_week(week)
+        topic = week_info["topic"] if week_info else ""
+        system = build_system_prompt(memory)
+        user = (
+            f"Проведи мини-собес по теме: {topic}\n\n"
+            "2-3 вопроса. Оцени ответы. Скажи что повторить."
+        )
+        return call_deepseek(system, user)
+
+
 # ── Main Logic ──────────────────────────────────────────────────────
 
+STUCK_KEYWORDS = ["что такое", "как работает", "расскажи", "объясни",
+                    "в чем разница", "почему", "зачем", "что значит",
+                    "разницу", "отличие", "как устроен", "как понять"]
+
 def process_message(user_msg, memory):
-    msg_lower = user_msg.strip().lower()
+    msg_raw = user_msg.strip()
+    msg_lower = msg_raw.lower()
+
+    # /new or вв prefix → clear conversation, then process the rest
+    if msg_lower.startswith("/new") or msg_lower.startswith("вв "):
+        memory["conversation"] = []
+        save_memory(memory)
+        rest = msg_raw[3:].strip()  # strip "/new" or "вв "
+        if rest:
+            # Continue processing the actual question
+            msg_raw = rest
+            msg_lower = rest.lower()
+        else:
+            return "🔄 Тред сброшен. Спрашивай что-то новое."
 
     # Command shortcuts
     if msg_lower in ("статус", "status", "прогресс"):
         return cmd_status(memory)
 
     if msg_lower in ("поехали", "старт", "го", "start", "давай начнём", "давай начнем"):
+        memory["conversation"] = []
         return cmd_start(memory)
 
     if msg_lower in ("дальше", "давай дальше", "готов к следующей",
                      "неделя пройдена", "я всё", "вперёд", "вперед"):
+        memory["conversation"] = []
         return cmd_advance(memory)
+
+    # Quiz / test from stuck points
+    if msg_lower in ("зачёт", "зачет", "собес", "опрос", "проверка"):
+        return cmd_quiz(memory)
 
     # Track session
     memory["sessions"] = memory.get("sessions", 0) + 1
@@ -358,7 +431,23 @@ def process_message(user_msg, memory):
     save_memory(memory)
 
     system = build_system_prompt(memory)
-    return call_deepseek(system, user_msg)
+    response = call_deepseek(system, msg_raw)
+
+    # Track conversation (keep last 10 exchanges)
+    conv = memory.setdefault("conversation", [])
+    conv.append({"user": msg_raw, "coach": response[:200]})
+    memory["conversation"] = conv[-10:]
+
+    # Track stuck points from questions
+    if any(kw in msg_lower for kw in STUCK_KEYWORDS):
+        stuck = memory.setdefault("stuck_points", [])
+        topic = msg_raw[:100]
+        if topic not in stuck:
+            stuck.append(topic)
+            memory["stuck_points"] = stuck[-20:]
+
+    save_memory(memory)
+    return response
 
 
 # ── Telegram Push ───────────────────────────────────────────────────

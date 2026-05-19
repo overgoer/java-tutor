@@ -305,18 +305,29 @@ def send_telegram(message, token=None):
         return False
 
     success = False
+    TG_MAX = 4096
     for cid in chat_ids:
         try:
-            body = json.dumps({
-                "chat_id": int(cid), "text": message,
-                "parse_mode": "Markdown",
-            }).encode()
-            req = urllib.request.Request(
-                f"https://api.telegram.org/bot{token}/sendMessage",
-                data=body,
-                headers={"Content-Type": "application/json"},
-            )
-            urllib.request.urlopen(req, timeout=10)
+            # Split long messages at newline boundaries
+            chunks = []
+            for line in message.split("\n"):
+                if not chunks or len(chunks[-1]) + len(line) + 1 > TG_MAX:
+                    chunks.append(line)
+                else:
+                    chunks[-1] += "\n" + line
+
+            for i, chunk in enumerate(chunks):
+                body = json.dumps({
+                    "chat_id": int(cid), "text": chunk,
+                    "parse_mode": "Markdown",
+                    "disable_notification": i > 0,
+                }).encode()
+                req = urllib.request.Request(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    data=body,
+                    headers={"Content-Type": "application/json"},
+                )
+                urllib.request.urlopen(req, timeout=10)
             success = True
         except Exception as e:
             print(f"  [send to {cid} failed: {e}]", file=sys.stderr)
